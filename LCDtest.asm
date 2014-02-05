@@ -1,6 +1,4 @@
-$MODDE2$
-org 0000H
-	ljmp MyProgram
+$NOLIST
 
 Wait40us:
 	mov R0, #149
@@ -66,9 +64,7 @@ Clr_loop:
 	lcall Wait40us
 	djnz R1, Clr_loop
 	ret
-	
-Reflow:
-	DB  'Reflow', 0
+
 	
 WaitHalfSec:
 	mov R2, #90
@@ -88,29 +84,6 @@ SendString:
 	SJMP SendString
 SSDone:
 	ret
-	
-MyProgram:
-	mov sp, #07FH
-	clr a
-	
-	mov LEDG,  a
-	mov LEDRA, a
-	mov LEDRB, a
-	mov LEDRC, a
-	
-	lcall LCD_Init
-	
-	mov a, #80H
-	lcall LCD_command
-	
-	mov A, #0x4D
-	lcall LCD_put
-	
-	mov DPTR, #Reflow
-	lcall SendString
-	
-Forever:
-	sjmp Forever
 	
 end
 	
