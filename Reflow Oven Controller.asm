@@ -4,12 +4,15 @@ CLK EQU 33333333
 FREQ_0 EQU 100
 TIMER0_RELOAD EQU 65536-(CLK/(12*FREQ_0)) ;change calculations to 1 second
 
+start_temp EQU 0
+
 MISO   EQU  P0.0 
 MOSI   EQU  P0.1 
 SCLK   EQU  P0.2
 CE_ADC EQU  P0.3
 CE_EE  EQU  P0.4
 CE_RTC EQU  P0.5 
+SSR    EQU  P1.0
 
 org 0000H
 	ljmp Program_Init
@@ -32,6 +35,9 @@ temp_rate:   ds 4
 BSEG
 mf:           dbit 1
 pwm_switch:   dbit 1
+preheating:   dbit 1
+processing:   dbit 1
+cooling:      dbit 1
 timer_done:   dbit 1
 preheat_done: dbit 1
 soak_done:    dbit 1
@@ -137,9 +143,11 @@ Timer0_Interrupt_Ret:
 
 ;for Oliver
 PWM_On:
-	;turn on oven and keep it on
+	setb SSR ;turn on oven
+	ret
 PWM_Off:
-	;turn off oven and keep it off
+	clr SSR  ;turn off oven
+	ret
 PWM_Speed:
 	;determine the speed at which the oven temp should be rising
 	jb PWM_Switch, PWM_Decrease
@@ -171,19 +179,41 @@ Program_Init:
 	
 Forever:
 	;call whatever needs to be done
-	;TODO: Merge with main
+	jnb Key.1, Stop_Function ;check if stop key is pressed
+	jb preheating, Preheat_Loop
+	jb processing, Process_Jump
+	jb cooling, Cool_Loop_Jump
+	jb cool_done, End_Function
+	jb reflow_done, Cool_Jump
+	jb soak_done, Reflow
+	jb preheat_done, Soak
 	sjmp Preheat
+Process_Jump:
+	lcall Process_Maintain_Loop
+Cool_Jump:
+	ljmp Cool
+Cool_Loop_Jump:
+	ljmp Cool_Loop
+	
+Stop_Function:
+	jnb Key.3, Stop_Function
+	;call whatever needs when oven stops
+End_Function:
+	;call whatever when entire process done
 	
 ;turns on oven and notifies user when it hits maximum preheat temp
 Preheat:
 	Load_req_temp(14000)  ;load required temperature to 140 degrees
+	setb preheating
 Preheat_Loop:
 	lcall cmp_temp        ;compares current temp with required temp
 	jb mf, Preheat_End    ;if current temp > required temp, end preheat
 	lcall PWM_On          ;turn on oven
-	sjmp Preheat_Loop     ;loops until current temp > required temp
+	ljmp Forever     ;loops until current temp > required temp
 Preheat_End:
+	clr preheating
 	setb preheat_done     ;end of preheat
+	ljmp Forever
 
 ;maintains temperature of oven at soak temp for the required time
 Soak_Pre:
@@ -199,8 +229,10 @@ Soak:
 	
 	mov R5, soak_time     ;defined by user and placed in this variable
 	
-	lcall Process_Init    ;call process to maintain heat at required temp
+	sjmp Process_Init    ;call process to maintain heat at required temp
+Soak_End:
 	setb soak_done        ;end of soak
+	ljmp forever
 
 ;works similar to soak, but for reflow temp
 Reflow_Pre:
@@ -216,20 +248,10 @@ Reflow:
 	
 	mov R5, reflow_time
 	
-	lcall Process_Init
+	sjmp Process_Init
+Reflow_End:
 	setb reflow_done
-
-;turns off oven and notifies user when oven is at room temp
-;works similar to preheat
-Cool:
-	Load_req_temp(2500)
-Cool_Loop:
-	lcall cmp_temp
-	jnb mf, Cool_End
-	lcall PWM_Off
-	sjmp Cool_Loop
-Cool_End:
-	setb cool_done
+	ljmp forever
 
 Process_Init:
 	;x has required temp defined by user, accurate to two decimals
@@ -244,21 +266,39 @@ Process_Init:
 	mov TH0, #high(TIMER0_RELOAD)
     mov TL0, #low(TIMER0_RELOAD)
 	setb TR0
+	
+	setb processing
 Process_Maintain_Loop:
-	jb timer_done, Soak_End       ;loops until soak time is done
+	jb timer_done, Process_End       ;loops until soak time is done
 	lcall cmp_temp
-	jb mf, Soak_Maintain_Off      ;if current temp > soak temp, turn oven off
-	lcall PWM_On                  ;else turn oven on
-	sjmp Process_Maintain_Loop
+	jb mf, Process_Maintain_Off      ;if current temp > soak temp, turn oven off
+	lcall PWM_On                     ;else turn oven on
+	ljmp Forever
 Process_Maintain_Off:
 	lcall PWM_Off
-	sjmp Soak_Maintain_Loop
+	ljmp Forever
 Process_End:
-	ret
+	clr processing
+	jb soak_done, Reflow_End
+	ljmp Soak_End
 
+;turns off oven and notifies user when oven is at room temp
+;works similar to preheat
+Cool:
+	Load_req_temp(2500)
+	setb cooling
+Cool_Loop:
+	lcall cmp_temp
+	jnb mf, Cool_End
+	lcall PWM_Off
+	ljmp forever
+Cool_End:
+	clr cooling
+	setb cool_done
+	ljmp End_Function
+	
 ;change if necessary
 Get_Temp:
-	lcall Delay
 	mov b, #0
 	lcall Read_ADC_Channel
 	
@@ -275,7 +315,7 @@ Get_Temp:
 	Load_y(19270)          ;divide by (41uV*470)
 	lcall div32
 	
-	Load_y(start_temp)
+	Load_y(start_temp)     ;add starting temp to get current temp in oven
 	lcall add32
 	
 	;x now has temperature accurate to 2 decimal
@@ -284,6 +324,8 @@ Get_Temp:
 	mov curr_temp+1, x+1
 	mov curr_temp+2, x+2
 	mov curr_temp+3, x+3
+	
+	lcall Delay
 	
 	ret
 

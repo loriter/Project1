@@ -530,6 +530,21 @@ div32_exit:
 	
 	ret
 
+xchg_xy:
+	mov a, x+0
+	xch a, y+0
+	mov x+0, a
+	mov a, x+1
+	xch a, y+1
+	mov x+1, a
+	mov a, x+2
+	xch a, y+2
+	mov x+2, a
+	mov a, x+3
+	xch a, y+3
+	mov x+3, a
+	ret
+
 Load_X MAC
 	mov x+0, #low (%0 % 0x10000) 
 	mov x+1, #high(%0 % 0x10000) 
@@ -542,6 +557,13 @@ Load_y MAC
 	mov y+1, #high(%0 % 0x10000) 
 	mov y+2, #low (%0 / 0x10000) 
 	mov y+3, #high(%0 / 0x10000) 
+ENDMAC
+
+Load_req_temp MAC
+	mov req_temp+0, #low (%0 % 0x10000) 
+	mov req_temp+1, #high(%0 % 0x10000) 
+	mov req_temp+2, #low (%0 / 0x10000) 
+	mov req_temp+3, #high(%0 / 0x10000) 
 ENDMAC
 	
 $LIST
