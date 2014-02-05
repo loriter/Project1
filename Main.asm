@@ -1,3 +1,6 @@
+;TODO: Convert Temperature to ASCII and display it
+;TODO: Have state changes after certain times
+
 $MODDE2
 
 org 0000H
@@ -12,14 +15,17 @@ TIMER2_RELOAD EQU 65536-(CLK/(12*FREQ))
 	
 DSEG at 30H
 Cnt_10ms: ds 1
-ReflowTemp: ds 1
+ReflowTemp: ds 4
 ReflowTime: ds 1
-SoakTemp: ds 1
+SoakTemp: ds 4
 SoakTime: ds 1
 Sec: ds 1
 Min: ds 1
-CurrentTemp: ds 1
+SoakSec: ds 1
+ReflowSec: ds 1
+CurrentTemp: ds 4
 CurrentState: ds 1
+Finished: ds 1
 x: ds 2
 y: ds 2
 bcd: ds 3
@@ -53,6 +59,23 @@ ISR_timer2:
 	
 	mov Cnt_10ms, #0
 	
+	mov a, CurrentState
+	cjne a, #1, checkReflowTime
+	mov a, SoakSec
+	add a, #1
+	da a
+	mov SoakSec, a
+	sjmp UpdateSec
+	
+checkReflowTime:
+	mov a, CurrentState
+	cjne a, #2, UpdateSec
+	mov a, ReflowSec
+	add a, #1
+	da a
+	mov ReflowSec, a
+	
+UpdateSec:	
 	mov a, Sec
 	add a, #1
 	da a
@@ -172,9 +195,52 @@ showTemp:
 	lcall LCD_command
 	mov DPTR, #DisplayTemp
 	lcall SendString
+	mov a, CurrentTemp+2
+	anl a, #00001111B
+	orl a, #00110000B
+	lcall LCD_put
+	mov a, CurrentTemp+1
+	anl a, #00001111B
+	orl a, #00110000B
+	lcall LCD_put
 	mov a, CurrentTemp
+	anl a, #00001111B
+	orl a, #00110000B
+	lcall LCD_put
+	mov a, #0x43
 	lcall LCD_put
     ret
+    
+checkState:
+	mov a, CurrentState
+	cjne a, #0, switchSoak
+	mov a, CurrentTemp
+	cjne a, #0x05, switchSoak
+	mov CurrentState, #1
+	lcall showState
+	ret
+switchSoak:
+	mov a, CurrentState
+	cjne a, #1, switchReflow
+	mov a, SoakSec
+	cjne a, SoakTime, switchReflow
+	mov CurrentState, #2
+	lcall showState
+	ret
+switchReflow:
+	mov a, CurrentState
+	cjne a, #2, switchCool
+	mov a, ReflowSec
+	cjne a, ReflowTime, switchCool
+	mov CurrentState, #3
+	lcall showState
+	ret
+switchCool:
+	mov a, CurrentTemp
+	cjne a, #100, endState
+	mov Finished, #1
+endState:
+	ret
     
 MyProgram:
 	mov SP, #7FH
@@ -240,8 +306,15 @@ TimerSet:
 	mov Cnt_10ms, #0
 	mov Sec, #0
 	mov Min, #0
-	mov CurrentTemp, #123
+	mov SoakSec, #0
+	mov ReflowSec, #0
+	mov SoakTime, #5
+	mov ReflowTime, #5
+	mov CurrentTemp, #0x05
+	mov CurrentTemp+1, #0x02
+	mov CurrentTemp+2, #0x01
 	mov CurrentState, #0
+	mov Finished, #0
 	
 	mov a,#80H
 	lcall LCD_command
@@ -266,6 +339,9 @@ StartProcess:
 Running:
 	jnb KEY.2, EndProcess
 	lcall showTemp
+	lcall checkState
+	mov a, Finished
+	cjne a, #0, EndProcess
 	sjmp Running
 EndProcess:
 	mov LEDG, #3
