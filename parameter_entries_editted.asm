@@ -6,7 +6,7 @@ CSEG
 ;Enter_Reflow_Time
 ;---------------------------------------------
 Enter_Reflow_Time:
-	mov x+0, R4
+	mov x+0, reflow_time
 	lcall hex2bcd
 	lcall display
 	
@@ -54,13 +54,13 @@ Enter_Reflow_Time:
 	Return_Enter_Parameters_Reflowtime:
 		lcall bcd2hex
 		mov a, x+0
-		mov R4, a
+		mov reflow_time, a
 		ret
 ;---------------------------------------------
 ;Enter_Reflow_Temp
 ;---------------------------------------------
 Enter_Reflow_Temp:
-	mov x+0, R5
+	mov x+0, reflow_temp
 	lcall hex2bcd
 	lcall display
 	
@@ -108,13 +108,13 @@ Enter_Reflow_Temp:
 	Return_Enter_Parameters_Reflowtemp:
 		lcall bcd2hex
 		mov a, x+0
-		mov R5, a
+		mov reflow_temp, a
 		ret
 ;---------------------------------------------
 ;Enter_Soak_Time
 ;---------------------------------------------
 Enter_Soak_Time:
-	mov x+0, R6
+	mov x+0, soak_time
 	lcall hex2bcd
 	lcall display
 	
@@ -162,13 +162,13 @@ Enter_Soak_Time:
 	Return_Enter_Parameters_Soaktime:
 		lcall bcd2hex
 		mov a, x+0
-		mov R6, a
+		mov soak_time, a
 		ret
 ;---------------------------------------------
 ;Enter_Soak_Temp
 ;---------------------------------------------
 Enter_Soak_Temp:
-	mov x+0, R7
+	mov x+0, soak_temp
 	lcall hex2bcd
 	lcall display
 	
@@ -216,6 +216,6 @@ Enter_Soak_Temp:
 	Return_Enter_Parameters_Soaktemp:
 		lcall bcd2hex
 		mov a, x+0
-		mov R7, a
+		mov soak_temp, a
 		ret
 $LIST

@@ -18,8 +18,13 @@ org 0000H
 	ljmp Program_Init
 org 000BH
 	ljmp Timer0_Interrupt
+org 002BH
+	ljmp ISR_timer2
 	
 DSEG at 30H
+Cnt_10ms: 	 ds 1
+Sec:		 ds 1
+Min:		 ds 1
 x:   	     ds 4
 y: 	 	     ds 4
 bcd: 	     ds 5
@@ -27,10 +32,11 @@ soak_temp:	 ds 1
 soak_time:	 ds 1
 reflow_temp: ds 1
 reflow_time: ds 1
-req_temp:    ds 4
-curr_temp:   ds 4
-prev_temp:   ds 4
-temp_rate:   ds 4
+req_temp:    ds 5
+curr_temp:   ds 5
+prev_temp:   ds 5
+temp_rate:   ds 5
+curr_state:  ds 1
 
 BSEG
 mf:           dbit 1
@@ -47,6 +53,9 @@ cool_done:    dbit 1
 CSEG
 
 $include(math32.asm)
+$include(LCDtest.asm)
+$include(parameter_entries_editted.asm)
+$include(LCDMain.asm)
 
 myLUT:
     DB 0C0H, 0F9H, 0A4H, 0B0H, 099H
@@ -169,17 +178,25 @@ Program_Init:
 	
 	setb CE_ADC
 	lcall Init_SPI
+	lcall LCD_init
 	
 	mov TMOD, #00000001B
 	clr TR0
 	clr TF0
     setb ET0
     
-    setb EA
+	lcall StartPrompts
+	lcall SetTimer2
+	lcall WaitForStart
+	
+	setb EA
 	
 Forever:
+	lcall showState
+	lcall showTemp
+	
 	;call whatever needs to be done
-	jnb Key.1, Stop_Function ;check if stop key is pressed
+	jnb Key.2, Stop_Function ;check if stop key is pressed
 	jb preheating, Preheat_Loop
 	jb processing, Process_Jump
 	jb cooling, Cool_Loop_Jump
@@ -196,6 +213,8 @@ Cool_Loop_Jump:
 	ljmp Cool_Loop
 	
 Stop_Function:
+	mov LEDG, #3
+	clr TF2
 	jnb Key.3, Stop_Function
 	;call whatever needs when oven stops
 End_Function:
@@ -213,6 +232,7 @@ Preheat_Loop:
 Preheat_End:
 	clr preheating
 	setb preheat_done     ;end of preheat
+	mov curr_state, #1
 	ljmp Forever
 
 ;maintains temperature of oven at soak temp for the required time
@@ -232,6 +252,7 @@ Soak:
 	sjmp Process_Init    ;call process to maintain heat at required temp
 Soak_End:
 	setb soak_done        ;end of soak
+	mov curr_state, #2
 	ljmp forever
 
 ;works similar to soak, but for reflow temp
@@ -251,6 +272,7 @@ Reflow:
 	sjmp Process_Init
 Reflow_End:
 	setb reflow_done
+	mov curr_state, #3
 	ljmp forever
 
 Process_Init:
