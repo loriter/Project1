@@ -1,10 +1,20 @@
 $MODDE2
 
-CLK EQU 33333333
-FREQ_0 EQU 100
+CLK           EQU 33333333
+FREQ_0        EQU 100
+FREQ_2        EQU 100
 TIMER0_RELOAD EQU 65536-(CLK/(12*FREQ_0)) ;change calculations to 1 second
+TIMER2_RELOAD EQU 65536-(CLK/(12*FREQ_2))
 
-start_temp EQU 0
+start_temp      EQU 0
+min_soak_time   EQU 60
+max_soak_time   EQU 90
+min_soak_temp   EQU 140
+max_soak_temp   EQU 200
+min_reflow_time EQU 30
+max_reflow_time EQU 45
+min_reflow_temp EQU 219
+max_reflow_temp EQU 225
 
 MISO   EQU  P0.0 
 MOSI   EQU  P0.1 
@@ -19,12 +29,12 @@ org 0000H
 org 000BH
 	ljmp Timer0_Interrupt
 org 002BH
-	ljmp ISR_timer2
+	ljmp Timer2_Interrupt
 	
 DSEG at 30H
-Cnt_10ms: 	 ds 1
-Sec:		 ds 1
-Min:		 ds 1
+cnt_10ms: 	     ds 1
+sec:		 ds 1
+min:		 ds 1
 x:   	     ds 4
 y: 	 	     ds 4
 bcd: 	     ds 5
@@ -53,39 +63,22 @@ cool_done:    dbit 1
 CSEG
 
 $include(math32.asm)
-$include(LCDtest.asm)
-$include(parameter_entries_editted.asm)
-$include(LCDMain.asm)
+$include(Get_Parameters.asm)
+$include(LCD_Controller.asm)
 
-myLUT:
-    DB 0C0H, 0F9H, 0A4H, 0B0H, 099H
-    DB 092H, 082H, 0F8H, 080H, 090H
-
-Display:
-	mov dptr, #myLUT
-    mov A, bcd+0
-    anl a, #0fh
-    movc A, @A+dptr
-    mov HEX0, A
-    mov A, bcd+0
-    swap a
-    anl a, #0fh
-    movc A, @A+dptr
-    mov HEX1, A
-    mov A, bcd+1
-    anl a, #0fh
-    movc A, @A+dptr
-    mov HEX2, A
-    mov A, bcd+1
-    swap a
-    anl a, #0fh
-    movc A, @A+dptr
-    mov HEX3, A
-    mov A, bcd+2
-    anl a, #0fh
-    movc A, @A+dptr
-    mov HEX4, A
-    ret
+PleaseSet:    DB 'Please set the',0
+SoakTemp1:    DB 'Soak Temp    ', 0
+SoakTime1:    DB 'Soak Time    ', 0
+ReflowTemp1:  DB 'Reflow Temp', 0
+ReflowTime1:  DB 'Reflow Time', 0
+StartMessage: DB 'KEY1 to start  ', 0
+StopMessage:  DB 'KEY2 to stop  ', 0
+PreHeatState: DB 'Preheat State  ', 0
+SoakState:    DB 'Soaking State  ', 0
+ReflowState:  DB 'Reflow State  ', 0
+CoolingState: DB 'Cooling State  ', 0
+DisplayTemp:  DB 'Temp: ', 0 
+myLUT:        DB 0C0H, 0F9H, 0A4H, 0B0H, 099H, 092H, 082H, 0F8H, 080H, 090H
 
 INIT_SPI:
     orl P0MOD, #00000110b
@@ -114,8 +107,8 @@ DO_SPI_G_LOOP:
 
 Delay:
 	mov R3, #20
-Delay_loop:
-	djnz R3, Delay_loop
+Delay_Loop:
+	djnz R3, Delay_Loop
 	ret
 	
 Read_ADC_Channel:
@@ -150,7 +143,6 @@ Timer0_Interrupt:
 Timer0_Interrupt_Ret:
 	reti
 
-;for Oliver
 PWM_On:
 	setb SSR ;turn on oven
 	ret
@@ -176,6 +168,11 @@ Program_Init:
 	mov LEDRC, #0
 	mov LEDG,  #0
 	
+	mov soak_time, #min_soak_time
+	mov soak_temp, #min_soak_temp
+	mov reflow_time, #min_reflow_time
+	mov reflow_temp, #min_reflow_temp
+	
 	setb CE_ADC
 	lcall Init_SPI
 	lcall LCD_init
@@ -185,15 +182,15 @@ Program_Init:
 	clr TF0
     setb ET0
     
-	lcall StartPrompts
-	lcall SetTimer2
-	lcall WaitForStart
+	lcall Start_Prompts
+	lcall Set_Timer2
+	lcall Wait_For_Start
 	
 	setb EA
 	
 Forever:
-	lcall showState
-	lcall showTemp
+	lcall Show_State
+	lcall Show_Temp
 	
 	;call whatever needs to be done
 	jnb Key.2, Stop_Function ;check if stop key is pressed
@@ -206,7 +203,7 @@ Forever:
 	jb preheat_done, Soak
 	sjmp Preheat
 Process_Jump:
-	lcall Process_Maintain_Loop
+	ljmp Process_Maintain_Loop
 Cool_Jump:
 	ljmp Cool
 Cool_Loop_Jump:
@@ -323,6 +320,25 @@ Cool_End:
 Get_Temp:
 	mov b, #0
 	lcall Read_ADC_Channel
+	
+	Load_y(100)
+	mov x+3, #0
+	mov x+2, #0
+	mov x+1, R7
+	mov x+0, R6
+	lcall mul32
+	
+	Load_y(4)
+	lcall div32
+	
+	mov curr_temp+0, x+0
+	mov curr_temp+1, x+1
+	mov curr_temp+2, x+2
+	mov curr_temp+3, x+3
+	
+	lcall Delay
+	
+	ret
 	
 	;I use 10^8 for 2 decimal accuracy
 	;To turn voltage to microvoltage, multiyply by 10^6
