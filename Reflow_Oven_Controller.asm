@@ -32,7 +32,8 @@ org 002BH
 	ljmp Timer2_Interrupt
 	
 DSEG at 30H
-cnt_10ms: 	     ds 1
+cnt_10ms:    ds 1
+cnt_10ms2:   ds 1
 sec:		 ds 1
 min:		 ds 1
 x:   	     ds 4
@@ -46,11 +47,18 @@ req_temp:    ds 5
 curr_temp:   ds 5
 prev_temp:   ds 5
 temp_rate:   ds 5
-curr_state:  ds 1
+curr_string: ds 1
+dptr_count:  ds 1
+create_data: ds 34
 
 BSEG
 mf:           dbit 1
+roll_start:   dbit 1
+roll_state2:  dbit 1
+roll_state3:  dbit 1
+carry_set:    dbit 1
 pwm_switch:   dbit 1
+started:      dbit 1
 preheating:   dbit 1
 processing:   dbit 1
 cooling:      dbit 1
@@ -60,24 +68,34 @@ soak_done:    dbit 1
 reflow_done:  dbit 1
 cool_done:    dbit 1
 
+XSEG
+
+xcreate_data: ds 34
+
 CSEG
 
 $include(math32.asm)
 $include(Get_Parameters.asm)
 $include(LCD_Controller.asm)
 
-PleaseSet:    DB 'Please set the',0
-SoakTemp1:    DB 'Soak Temp    ', 0
-SoakTime1:    DB 'Soak Time    ', 0
-ReflowTemp1:  DB 'Reflow Temp', 0
-ReflowTime1:  DB 'Reflow Time', 0
-StartMessage: DB 'KEY1 to start  ', 0
-StopMessage:  DB 'KEY2 to stop  ', 0
-PreHeatState: DB 'Preheat State  ', 0
-SoakState:    DB 'Soaking State  ', 0
-ReflowState:  DB 'Reflow State  ', 0
-CoolingState: DB 'Cooling State  ', 0
-DisplayTemp:  DB 'Temp: ', 0 
+UseSwitch:    DB 'SW0-3:Parameters', 0
+UseKey1:      DB 'KEY1:Start      ', 0
+UseKey2:      DB 'KEY2:Stop       ', 0
+PleaseSet:    DB 'Please set the  ', 0
+SoakTemp:     DB 'Soak Temp       ', 0
+SoakTime:     DB 'Soak Time       ', 0
+ReflowTemp:   DB 'Reflow Temp     ', 0
+ReflowTime:   DB 'Reflow Time     ', 0
+PreHeatState: DB 'Preheat State   ', 0
+SoakState:    DB 'Soaking State   ', 0
+ReflowState:  DB 'Reflow State    ', 0
+CoolingState: DB 'Cooling State   ', 0
+DisplayTemp:  DB 'Temp: ',0
+DSoakTemp:    DB 'Soak Temp: ', 0 
+DSoakTime:    DB 'Soak Time: ', 0
+DReflowTemp:  DB 'Reflow Temp: ', 0
+DReflowTime:  DB 'Reflow Time: ', 0
+DisplayClear: DB '                ', 0
 myLUT:        DB 0C0H, 0F9H, 0A4H, 0B0H, 099H, 092H, 082H, 0F8H, 080H, 090H
 
 INIT_SPI:
@@ -135,12 +153,32 @@ Read_ADC_Channel:
 	ret
 
 Timer0_Interrupt:
+	push psw
+	push acc
+	push dpl
+	push dph
+	
 	mov TH0, #high(TIMER0_RELOAD)
     mov TL0, #low(TIMER0_RELOAD)
+    
+    clr TF0
+    
+    mov a, cnt_10ms2
+    inc a
+    mov cnt_10ms, a
+    
+    cjne a, #100, Timer0_Interrupt_Ret
+    
+    mov cnt_10ms, #0
     
     djnz R5, Timer0_Interrupt_Ret ;when R5(required time) hits 0, set timer_done
     setb timer_done
 Timer0_Interrupt_Ret:
+	pop dph
+	pop dpl
+	pop acc
+	pop psw
+	
 	reti
 
 PWM_On:
@@ -168,11 +206,34 @@ Program_Init:
 	mov LEDRC, #0
 	mov LEDG,  #0
 	
+	mov curr_string, #0
+	setb roll_start
+	mov dptr_count, #0
+	clr preheat_done
+	clr soak_done
+	clr reflow_done
+	clr cool_done
+	clr preheating
+	clr processing
+	clr cooling
+	
+	mov x+0, #0
+	mov x+1, #0
+	mov x+2, #0
+	mov x+3, #0
+	
+	mov y+0, #0
+	mov y+1, #0
+	mov y+2, #0
+	mov y+3, #0
+		
 	mov soak_time, #min_soak_time
 	mov soak_temp, #min_soak_temp
 	mov reflow_time, #min_reflow_time
 	mov reflow_temp, #min_reflow_temp
 	
+	clr started
+		
 	setb CE_ADC
 	lcall Init_SPI
 	lcall LCD_init
@@ -180,18 +241,26 @@ Program_Init:
 	mov TMOD, #00000001B
 	clr TR0
 	clr TF0
+	mov TH0, #high(TIMER0_RELOAD)
+    mov TL0, #low(TIMER0_RELOAD)
+	mov cnt_10ms2, #0
     setb ET0
+    setb EA
     
 	lcall Start_Prompts
 	lcall Set_Timer2
 	lcall Wait_For_Start
-	
-	setb EA
+	mov a, #80H
+	lcall LCD_Command
+	mov dptr, #DisplayClear
+	lcall Send_String
+	mov a, #0C0H
+	lcall LCD_Command
+	mov dptr, #DisplayClear
+	lcall Send_String
 	
 Forever:
-	lcall Show_State
-	lcall Show_Temp
-	
+	;lcall Show_Temp
 	;call whatever needs to be done
 	jnb Key.2, Stop_Function ;check if stop key is pressed
 	jb preheating, Preheat_Loop
@@ -212,13 +281,14 @@ Cool_Loop_Jump:
 Stop_Function:
 	mov LEDG, #3
 	clr TF2
-	jnb Key.3, Stop_Function
+	jb Key.3, Stop_Function
 	;call whatever needs when oven stops
 End_Function:
 	;call whatever when entire process done
 	
 ;turns on oven and notifies user when it hits maximum preheat temp
 Preheat:
+	lcall Show_State
 	Load_req_temp(14000)  ;load required temperature to 140 degrees
 	setb preheating
 Preheat_Loop:
@@ -229,7 +299,6 @@ Preheat_Loop:
 Preheat_End:
 	clr preheating
 	setb preheat_done     ;end of preheat
-	mov curr_state, #1
 	ljmp Forever
 
 ;maintains temperature of oven at soak temp for the required time
@@ -237,6 +306,7 @@ Soak_Pre:
 	;call pwm function that raises preheat temp to soak temp
 	;this is where we we increase/decrease pulse to quicken/slow heating
 Soak:
+	lcall Show_State
 	mov x+0, soak_temp    ;defined by user and placed in this variable
 	mov x+1, #0
 	mov x+2, #0
@@ -249,7 +319,6 @@ Soak:
 	sjmp Process_Init    ;call process to maintain heat at required temp
 Soak_End:
 	setb soak_done        ;end of soak
-	mov curr_state, #2
 	ljmp forever
 
 ;works similar to soak, but for reflow temp
@@ -257,6 +326,7 @@ Reflow_Pre:
 	;call pwm function that raises preheat temp to reflow temp
 	;this is where we we increase/decrease pulse to quicken/slow heating
 Reflow:
+	lcall Show_State
 	mov x+0, reflow_temp
 	mov x+1, #0
 	mov x+2, #0
@@ -269,7 +339,6 @@ Reflow:
 	sjmp Process_Init
 Reflow_End:
 	setb reflow_done
-	mov curr_state, #3
 	ljmp forever
 
 Process_Init:
@@ -282,8 +351,6 @@ Process_Init:
 	;start timer for required time (read annotations on timer 0 interrupt)
 	;R5 has required time
 	clr timer_done
-	mov TH0, #high(TIMER0_RELOAD)
-    mov TL0, #low(TIMER0_RELOAD)
 	setb TR0
 	
 	setb processing
@@ -304,6 +371,7 @@ Process_End:
 ;turns off oven and notifies user when oven is at room temp
 ;works similar to preheat
 Cool:
+	lcall Show_State
 	Load_req_temp(2500)
 	setb cooling
 Cool_Loop:
@@ -321,24 +389,24 @@ Get_Temp:
 	mov b, #0
 	lcall Read_ADC_Channel
 	
-	Load_y(100)
-	mov x+3, #0
-	mov x+2, #0
-	mov x+1, R7
-	mov x+0, R6
-	lcall mul32
+	;Load_y(100)
+	;mov x+3, #0
+	;mov x+2, #0
+	;mov x+1, R7
+	;mov x+0, R6
+	;lcall mul32
 	
-	Load_y(4)
-	lcall div32
+	;Load_y(4)
+	;lcall div32
 	
-	mov curr_temp+0, x+0
-	mov curr_temp+1, x+1
-	mov curr_temp+2, x+2
-	mov curr_temp+3, x+3
+	;mov curr_temp+0, x+0
+	;mov curr_temp+1, x+1
+	;mov curr_temp+2, x+2
+	;mov curr_temp+3, x+3
 	
-	lcall Delay
+	;lcall Delay
 	
-	ret
+	;ret
 	
 	;I use 10^8 for 2 decimal accuracy
 	;To turn voltage to microvoltage, multiyply by 10^6
@@ -346,8 +414,8 @@ Get_Temp:
 	Load_y(488281)         ;multiply bit by (0.00488281*10^8)
 	mov x+3, #0
 	mov x+2, #0
-	mov x+1, R7
-	mov x+0, R6
+	mov x+1, #0
+	mov x+0, #0
 	lcall mul32
 	
 	Load_y(19270)          ;divide by (41uV*470)
